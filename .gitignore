@@ -1,0 +1,9 @@
+.idea/
+overlay/
+
+models/*.weights
+models/*.onnx
+models/*.trt
+*.so
+*.sif
+
