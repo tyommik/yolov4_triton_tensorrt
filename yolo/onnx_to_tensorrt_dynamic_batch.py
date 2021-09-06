@@ -90,12 +90,12 @@ def set_net_batch(network, batch_size):
     return network
 
 
-def build_engine(model_name, category_num, do_int8, dla_core,
+def build_engine(model_name, category_num, net_w, net_h, do_int8, dla_core,
                  batch_size=1, verbose=False):
     """Build a TensorRT engine from ONNX using the older API."""
-    net_w, net_h = get_input_wh(model_name)
 
     print('Loading the ONNX file...')
+    print(f'{net_h},  {net_w}')
     onnx_data = load_onnx(model_name)
     if onnx_data is None:
         return None
@@ -114,7 +114,7 @@ def build_engine(model_name, category_num, do_int8, dla_core,
 
         print('Adding yolo_layer plugins...')
         network = add_yolo_plugins(
-            network, model_name, category_num, TRT_LOGGER)
+            network, model_name, category_num, net_w, net_h, TRT_LOGGER)
 
         print('Building an engine.  This would take a while...')
         print('(Use "--verbose" or "-v" to enable verbose logging.)')
@@ -178,6 +178,12 @@ def main():
               '[{dimension}], where dimension could be a single '
               'number (e.g. 288, 416, 608) or WxH (e.g. 416x256)'))
     parser.add_argument(
+        '-w', '--width', type=int, default=416,
+        help='input width resolution')
+    parser.add_argument(
+        '-he', '--height', type=int, default=416,
+        help='input height resolution')
+    parser.add_argument(
         '--int8', action='store_true',
         help='build INT8 TensorRT engine')
     parser.add_argument(
@@ -189,7 +195,7 @@ def main():
     args = parser.parse_args()
 
     engine = build_engine(
-        args.model, args.category_num, args.int8, args.dla_core,
+        args.model, args.category_num, args.width, args.height, args.int8, args.dla_core,
         args.batch_size, args.verbose)
     if engine is None:
         raise SystemExit('ERROR: failed to build the TensorRT engine!')

@@ -88,12 +88,12 @@ def set_net_batch(network, batch_size):
     return network
 
 
-def build_engine(model_name, do_int8, dla_core, verbose=False):
+def build_engine(model_name, do_int8, net_w, net_h, dla_core, verbose=False):
     """Build a TensorRT engine from ONNX using the older API."""
     cfg_file_path = model_name + '.cfg'
     parser = DarkNetParser()
     layer_configs = parser.parse_cfg_file(cfg_file_path)
-    net_h, net_w = get_h_and_w(layer_configs)
+    # net_h, net_w = get_h_and_w(layer_configs)
 
     print('Loading the ONNX file...')
     onnx_data = load_onnx(model_name)
@@ -178,6 +178,12 @@ def main():
               '{dimension} could be either a single number (e.g. '
               '288, 416, 608) or 2 numbers, WxH (e.g. 416x256)'))
     parser.add_argument(
+        '-w', '--width', type=int, default=416,
+        help='input width resolution')
+    parser.add_argument(
+        '-h', '--height', type=int, default=416,
+        help='input height resolution')
+    parser.add_argument(
         '--int8', action='store_true',
         help='build INT8 TensorRT engine')
     parser.add_argument(
@@ -186,7 +192,7 @@ def main():
     args = parser.parse_args()
 
     engine = build_engine(
-        args.model, args.int8, args.dla_core, args.verbose)
+        args.model, args.int8, args.width, args.height, args.dla_core, args.verbose)
     if engine is None:
         raise SystemExit('ERROR: failed to build the TensorRT engine!')
 

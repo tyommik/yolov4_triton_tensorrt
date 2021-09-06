@@ -121,9 +121,9 @@ def get_plugin_creator(plugin_name, logger):
     return None
 
 
-def add_yolo_plugins(network, model_name, num_classes, logger):
+def add_yolo_plugins(network, model_name, num_classes, input_width, input_height, logger):
     """Add yolo plugins into a TensorRT network."""
-    input_width, input_height = get_input_wh(model_name)
+    # input_width, input_height = get_input_wh(model_name)
     yolo_whs = get_yolo_whs(model_name, input_width, input_height)
     if not verify_classes(model_name, num_classes):
         raise ValueError('bad num_classes (%d)' % num_classes)
