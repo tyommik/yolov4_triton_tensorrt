@@ -1,147 +1,15 @@
-# yolo_to_onnx.py
-#
-# Copyright 1993-2019 NVIDIA Corporation.  All rights reserved.
-#
-# NOTICE TO LICENSEE:
-#
-# This source code and/or documentation ("Licensed Deliverables") are
-# subject to NVIDIA intellectual property rights under U.S. and
-# international Copyright laws.
-#
-# These Licensed Deliverables contained herein is PROPRIETARY and
-# CONFIDENTIAL to NVIDIA and is being provided under the terms and
-# conditions of a form of NVIDIA software license agreement by and
-# between NVIDIA and Licensee ("License Agreement") or electronically
-# accepted by Licensee.  Notwithstanding any terms or conditions to
-# the contrary in the License Agreement, reproduction or disclosure
-# of the Licensed Deliverables to any third party without the express
-# written consent of NVIDIA is prohibited.
-#
-# NOTWITHSTANDING ANY TERMS OR CONDITIONS TO THE CONTRARY IN THE
-# LICENSE AGREEMENT, NVIDIA MAKES NO REPRESENTATION ABOUT THE
-# SUITABILITY OF THESE LICENSED DELIVERABLES FOR ANY PURPOSE.  IT IS
-# PROVIDED "AS IS" WITHOUT EXPRESS OR IMPLIED WARRANTY OF ANY KIND.
-# NVIDIA DISCLAIMS ALL WARRANTIES WITH REGARD TO THESE LICENSED
-# DELIVERABLES, INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY,
-# NONINFRINGEMENT, AND FITNESS FOR A PARTICULAR PURPOSE.
-# NOTWITHSTANDING ANY TERMS OR CONDITIONS TO THE CONTRARY IN THE
-# LICENSE AGREEMENT, IN NO EVENT SHALL NVIDIA BE LIABLE FOR ANY
-# SPECIAL, INDIRECT, INCIDENTAL, OR CONSEQUENTIAL DAMAGES, OR ANY
-# DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS,
-# WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS
-# ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE
-# OF THESE LICENSED DELIVERABLES.
-#
-# U.S. Government End Users.  These Licensed Deliverables are a
-# "commercial item" as that term is defined at 48 C.F.R. 2.101 (OCT
-# 1995), consisting of "commercial computer software" and "commercial
-# computer software documentation" as such terms are used in 48
-# C.F.R. 12.212 (SEPT 1995) and is provided to the U.S. Government
-# only as a commercial end item.  Consistent with 48 C.F.R.12.212 and
-# 48 C.F.R. 227.7202-1 through 227.7202-4 (JUNE 1995), all
-# U.S. Government End Users acquire the Licensed Deliverables with
-# only those rights set forth herein.
-#
-# Any use of the Licensed Deliverables in individual and commercial
-# software must include, in the user documentation and internal
-# comments to the code, the above Disclaimer and U.S. Government End
-# Users Notice.
-#
-
-
-import os
-import sys
-import argparse
+from __future__ import print_function
 from collections import OrderedDict
-
-import numpy as np
 import onnx
-from onnx import helper, TensorProto
-
-
-MAX_BATCH_SIZE = -1
-
-
-def parse_args():
-    """Parse command-line arguments."""
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        '-c', '--category_num', type=int,
-        help='number of object categories (obsolete)')
-    parser.add_argument(
-        '-m', '--model', type=str, required=True,
-        help=('[yolov3-tiny|yolov3|yolov3-spp|yolov4-tiny|yolov4|'
-              'yolov4-csp|yolov4x-mish]-[{dimension}], where '
-              '{dimension} could be either a single number (e.g. '
-              '288, 416, 608) or 2 numbers, WxH (e.g. 416x256)'))
-    args = parser.parse_args()
-    return args
-
-
-def rreplace(s, old, new, occurrence=1):
-    """Replace old pattern in the string with new from the right."""
-    return new.join(s.rsplit(old, occurrence))
-
-
-def is_pan_arch(cfg_file_path):
-    """Determine whether the yolo model is with PAN architecture."""
-    with open(cfg_file_path, 'r') as f:
-        cfg_lines = [l.strip() for l in f.readlines()]
-    yolos_or_upsamples = [l for l in cfg_lines
-                            if l in ['[yolo]', '[upsample]']]
-    yolo_count = len([l for l in yolos_or_upsamples if l == '[yolo]'])
-    upsample_count = len(yolos_or_upsamples) - yolo_count
-    assert yolo_count == 2 or yolo_count == 3
-    assert upsample_count == yolo_count - 1 or upsample_count == 0
-    # the model is with PAN if an upsample layer appears before the 1st yolo
-    return yolos_or_upsamples[0] == '[upsample]'
-
-
-def get_output_convs(layer_configs):
-    """Find output conv layer names from layer configs.
-
-    The output conv layers are those conv layers immediately proceeding
-    the yolo layers.
-
-    # Arguments
-        layer_configs: output of the DarkNetParser, i.e. a OrderedDict of
-                       the yolo layers.
-    """
-    output_convs = []
-    previous_layer = None
-    for current_layer in layer_configs.keys():
-        if previous_layer is not None and current_layer.endswith('yolo'):
-            assert previous_layer.endswith('convolutional')
-            activation = layer_configs[previous_layer]['activation']
-            if activation == 'linear':
-                output_convs.append(previous_layer)
-            elif activation == 'logistic':
-                output_convs.append(previous_layer + '_lgx')
-            else:
-                raise TypeError('unexpected activation: %s' % activation)
-        previous_layer = current_layer
-    return output_convs
-
-
-def get_category_num(cfg_file_path):
-    """Find number of output classes of the yolo model."""
-    with open(cfg_file_path, 'r') as f:
-        cfg_lines = [l.strip() for l in f.readlines()]
-    classes_lines = [l for l in cfg_lines if l.startswith('classes=')]
-    assert len(set(classes_lines)) == 1
-    return int(classes_lines[-1].split('=')[-1].strip())
-
-
-def get_h_and_w(layer_configs):
-    """Find input height and width of the yolo model from layer configs."""
-    net_config = layer_configs['000_net']
-    return net_config['height'], net_config['width']
+from onnx import helper
+from onnx import TensorProto
+import numpy as np
+import argparse
+import os
 
 
 class DarkNetParser(object):
-    """Definition of a parser for DarkNet-based YOLO model."""
-
-    def __init__(self, supported_layers=None):
+    def __init__(self, supported_layers):
         """Initializes a DarkNetParser object.
 
         Keyword argument:
@@ -149,20 +17,18 @@ class DarkNetParser(object):
         parameters are only added to the class dictionary if a parsed layer is included.
         """
 
-        # A list of YOLO layers containing dictionaries with all layer
+        # A list of YOLOv4 layers containing dictionaries with all layer
         # parameters:
         self.layer_configs = OrderedDict()
-        self.supported_layers = supported_layers if supported_layers else \
-                                ['net', 'convolutional', 'maxpool', 'shortcut',
-                                 'route', 'upsample', 'yolo']
+        self.supported_layers = supported_layers
         self.layer_counter = 0
 
     def parse_cfg_file(self, cfg_file_path):
-        """Takes the yolov?.cfg file and parses it layer by layer,
+        """Takes the yolov4.cfg file and parses it layer by layer,
         appending each layer's parameters as a dictionary to layer_configs.
 
         Keyword argument:
-        cfg_file_path
+        cfg_file_path -- path to the yolov4.cfg file as string
         """
         with open(cfg_file_path, 'r') as cfg_file:
             remainder = cfg_file.read()
@@ -196,47 +62,43 @@ class DarkNetParser(object):
         remainder -- a string with all raw text after the previously parsed layer
         """
         remainder = remainder.split('[', 1)
-        while len(remainder[0]) > 0 and remainder[0][-1] == '#':
-            # '#[...' case (the left bracket is proceeded by a pound sign),
-            # assuming this layer is commented out, so go find the next '['
-            remainder = remainder[1].split('[', 1)
         if len(remainder) == 2:
             remainder = remainder[1]
         else:
-            # no left bracket found in remainder
             return None, None, None
         remainder = remainder.split(']', 1)
         if len(remainder) == 2:
             layer_type, remainder = remainder
         else:
-            # no right bracket
-            raise ValueError('no closing bracket!')
-        if layer_type not in self.supported_layers:
-            raise ValueError('%s layer not supported!' % layer_type)
+            return None, None, None
+        if remainder.replace(' ', '')[0] == '#':
+            remainder = remainder.split('\n', 1)[1]
 
-        out = remainder.split('\n[', 1)
-        if len(out) == 2:
-            layer_param_block, remainder = out[0], '[' + out[1]
+        if '\n\n' in remainder:
+            layer_param_block, remainder = remainder.split('\n\n', 1)
         else:
-            layer_param_block, remainder = out[0], ''
-        layer_param_lines = layer_param_block.split('\n')
-        # remove empty lines
-        layer_param_lines = [l.lstrip() for l in layer_param_lines if l.lstrip()]
-        # don't parse yolo layers
-        if layer_type == 'yolo':  layer_param_lines = []
-        skip_params = ['steps', 'scales'] if layer_type == 'net' else []
+            layer_param_block, remainder = remainder, ''
+
+        layer_param_lines = layer_param_block.split('\n')[1:]
         layer_name = str(self.layer_counter).zfill(3) + '_' + layer_type
         layer_dict = dict(type=layer_type)
-        for param_line in layer_param_lines:
-            param_line = param_line.split('#')[0]
-            if not param_line:  continue
-            assert '[' not in param_line
-            param_type, param_value = self._parse_params(param_line, skip_params)
-            layer_dict[param_type] = param_value
+        if layer_type in self.supported_layers:
+            for param_line in layer_param_lines:
+                if param_line[0] == '#':
+                    continue
+                param_type, param_value = self._parse_params(param_line)
+                layer_dict[param_type] = param_value
+        else:
+            for param_line in layer_param_lines:
+                if 'class' in param_line or 'num' in param_line or 'mask' in param_line:
+                    param_type, param_value = self._parse_params(param_line)
+                    layer_dict[param_type] = param_value
+        if len(layer_dict) == 1:
+            return None, None, remainder
         self.layer_counter += 1
         return layer_dict, layer_name, remainder
 
-    def _parse_params(self, param_line, skip_params=None):
+    def _parse_params(self, param_line):
         """Identifies the parameters contained in one of the cfg file and returns
         them in the required format for each parameter type, e.g. as a list, an int or a float.
 
@@ -245,11 +107,8 @@ class DarkNetParser(object):
         """
         param_line = param_line.replace(' ', '')
         param_type, param_value_raw = param_line.split('=')
-        assert param_value_raw
         param_value = None
-        if skip_params and param_type in skip_params:
-            param_type = None
-        elif param_type == 'layers':
+        if param_type == 'layers':
             layer_indexes = list()
             for index in param_value_raw.split(','):
                 layer_indexes.append(int(index))
@@ -260,6 +119,8 @@ class DarkNetParser(object):
                 param_value_raw[1:].isdigit()
             if condition_param_value_positive or condition_param_value_negative:
                 param_value = int(param_value_raw)
+            elif ',' in param_value_raw:
+                param_value = param_value_raw.split(',')
             else:
                 param_value = float(param_value_raw)
         else:
@@ -327,24 +188,146 @@ class ConvParams(object):
         param_name = self.node_name + '_' + param_category + '_' + suffix
         return param_name
 
-class UpsampleParams(object):
-    #Helper class to store the scale parameter for an Upsample node.
+
+class ResizeParams(object):
+    # Helper class to store the scale parameter for an Resize node.
 
     def __init__(self, node_name, value):
-        """Constructor based on the base node name (e.g. 86_Upsample),
+        """Constructor based on the base node name (e.g. 86_Resize),
         and the value of the scale input tensor.
 
         Keyword arguments:
-        node_name -- base name of this YOLO Upsample layer
-        value -- the value of the scale input to the Upsample layer as a numpy array
+        node_name -- base name of this YOLO Resize layer
+        value -- the value of the scale input to the Resize layer as numpy array
         """
         self.node_name = node_name
         self.value = value
 
     def generate_param_name(self):
-        """Generates the scale parameter name for the Upsample node."""
-        param_name = self.node_name + '_' + 'scale'
+        """Generates the scale parameter name for the Resize node."""
+        param_name = self.node_name + '_' + "scale"
         return param_name
+
+
+class ROIParams(object):
+    # Helper class to store the scale parameter for an ROI node.
+
+    def __init__(self, node_name, value):
+        """Constructor based on the base node name (e.g. 86_Resize),
+        and the value of the scale input tensor.
+
+        Keyword arguments:
+        node_name -- base name of this YOLO Resize layer
+        value -- the value of the scale input to the Resize layer as numpy array
+        """
+        self.node_name = node_name
+        self.value = value
+
+    def generate_param_name(self):
+        """Generates the scale parameter name for the Resize node."""
+        param_name = self.node_name + '_' + "roi"
+        return param_name
+
+
+class ReshapeParams(object):
+    # Helper class to store the scale parameter for an Reshape node.
+
+    def __init__(self, node_name, value):
+        """Constructor based on the base node name (e.g. 86_Resize),
+        and the value of the scale input tensor.
+
+        Keyword arguments:
+        node_name -- base name of this YOLO Resize layer
+        value -- the value of the scale input to the Resize layer as numpy array
+        """
+        self.node_name = node_name
+        self.value = value
+
+    def generate_param_name(self):
+        """Generates the scale parameter name for the Resize node."""
+        param_name = self.node_name + '_' + "shape"
+        return param_name
+
+
+class StartParams(object):
+    # Helper class to store the scale parameter for an Start node.
+
+    def __init__(self, node_name, value):
+        """Constructor based on the base node name (e.g. 86_Resize),
+        and the value of the scale input tensor.
+
+        Keyword arguments:
+        node_name -- base name of this YOLO Resize layer
+        value -- the value of the scale input to the Resize layer as numpy array
+        """
+        self.node_name = node_name
+        self.value = value
+
+    def generate_param_name(self):
+        """Generates the scale parameter name for the Resize node."""
+        param_name = self.node_name + '_' + "start"
+        return param_name
+
+
+class EndParams(object):
+    # Helper class to store the scale parameter for an End node.
+
+    def __init__(self, node_name, value):
+        """Constructor based on the base node name (e.g. 86_Resize),
+        and the value of the scale input tensor.
+
+        Keyword arguments:
+        node_name -- base name of this YOLO Resize layer
+        value -- the value of the scale input to the Resize layer as numpy array
+        """
+        self.node_name = node_name
+        self.value = value
+
+    def generate_param_name(self):
+        """Generates the scale parameter name for the Resize node."""
+        param_name = self.node_name + '_' + "end"
+        return param_name
+
+
+class AxesParams(object):
+    # Helper class to store the scale parameter for an Axes node.
+
+    def __init__(self, node_name, value):
+        """Constructor based on the base node name (e.g. 86_Resize),
+        and the value of the scale input tensor.
+
+        Keyword arguments:
+        node_name -- base name of this YOLO Resize layer
+        value -- the value of the scale input to the Resize layer as numpy array
+        """
+        self.node_name = node_name
+        self.value = value
+
+    def generate_param_name(self):
+        """Generates the scale parameter name for the Resize node."""
+        param_name = self.node_name + '_' + "axes"
+        return param_name
+
+
+class StepParams(object):
+    # Helper class to store the scale parameter for an Step node.
+
+    def __init__(self, node_name, value):
+        """Constructor based on the base node name (e.g. 86_Resize),
+        and the value of the scale input tensor.
+
+        Keyword arguments:
+        node_name -- base name of this YOLO Resize layer
+        value -- the value of the scale input to the Resize layer as numpy array
+        """
+        self.node_name = node_name
+        self.value = value
+
+    def generate_param_name(self):
+        """Generates the scale parameter name for the Resize node."""
+        param_name = self.node_name + '_' + "step"
+        return param_name
+
 
 class WeightLoader(object):
     """Helper class used for loading the serialized weights of a binary file stream
@@ -353,25 +336,26 @@ class WeightLoader(object):
     """
 
     def __init__(self, weights_file_path):
-        """Initialized with a path to the YOLO .weights file.
+        """Initialized with a path to the YOLOv4 .weights file.
 
         Keyword argument:
         weights_file_path -- path to the weights file.
         """
         self.weights_file = self._open_weights_file(weights_file_path)
 
-    def load_upsample_scales(self, upsample_params):
-        """Returns the initializers with the value of the scale input
-        tensor given by upsample_params.
+    def load_resize_scales(self, resize_params):
+        """
+        Returns the initializers with the value of the scale input
+        tensor given by resize_params.
 
         Keyword argument:
-        upsample_params -- a UpsampleParams object
+        resize_params -- a ResizeParams object
         """
         initializer = list()
         inputs = list()
-        name = upsample_params.generate_param_name()
-        shape = upsample_params.value.shape
-        data = upsample_params.value
+        name = resize_params.generate_param_name()
+        shape = resize_params.value.shape
+        data = resize_params.value
         scale_init = helper.make_tensor(
             name, TensorProto.FLOAT, shape, data)
         scale_input = helper.make_tensor_value_info(
@@ -380,6 +364,40 @@ class WeightLoader(object):
         inputs.append(scale_input)
         return initializer, inputs
 
+    def load_reshape_scales(self, reshape_params):
+        """
+        Returns the initializers with the value of the reshape_params.
+
+        Keyword argument:
+        reshape_params -- a ReshapeParams object
+        """
+        initializer = list()
+        inputs = list()
+        name = reshape_params.generate_param_name()
+        shape = reshape_params.value.shape
+        data = reshape_params.value
+        scale_init = helper.make_tensor(
+            name, TensorProto.INT64, shape, data)
+        scale_input = helper.make_tensor_value_info(
+            name, TensorProto.INT64, shape)
+        initializer.append(scale_init)
+        inputs.append(scale_input)
+        return initializer, inputs
+
+    def load_slice_params(self, slice_params):
+        initializer = list()
+        inputs = list()
+        for params in slice_params:
+            name = params.generate_param_name()
+            shape = params.value.shape
+            data = params.value
+            data_init = helper.make_tensor(
+                name, TensorProto.INT64, shape, data)
+            data_input = helper.make_tensor_value_info(
+                name, TensorProto.INT64, shape)
+            initializer.append(data_init)
+            inputs.append(data_input)
+        return initializer, inputs
 
     def load_conv_weights(self, conv_params):
         """Returns the initializers with weights from the weights file and
@@ -415,15 +433,16 @@ class WeightLoader(object):
         return initializer, inputs
 
     def _open_weights_file(self, weights_file_path):
-        """Opens a YOLO DarkNet file stream and skips the header.
+        """Opens a YOLOv4 DarkNet file stream and skips the header.
 
         Keyword argument:
         weights_file_path -- path to the weights file.
         """
         weights_file = open(weights_file_path, 'rb')
         length_header = 5
-        np.ndarray(shape=(length_header, ), dtype='int32',
-                   buffer=weights_file.read(length_header * 4))
+        np.ndarray(
+            shape=(length_header, ), dtype='int32', buffer=weights_file.read(
+                length_header * 4))
         return weights_file
 
     def _create_param_tensors(self, conv_params, param_category, suffix):
@@ -475,16 +494,15 @@ class WeightLoader(object):
 class GraphBuilderONNX(object):
     """Class for creating an ONNX graph from a previously generated list of layer dictionaries."""
 
-    def __init__(self, model_name, output_tensors, batch_size):
-        """Initialize with all DarkNet default parameters used creating
-        YOLO, and specify the output tensors as an OrderedDict for their
-        output dimensions with their names as keys.
+    def __init__(self, output_tensors):
+        """Initialize with all DarkNet default parameters used creating YOLOv4,
+        and specify the output tensors as an OrderedDict for their output dimensions
+        with their names as keys.
 
         Keyword argument:
         output_tensors -- the output tensors as an OrderedDict containing the keys'
         output dimensions
         """
-        self.model_name = model_name
         self.output_tensors = output_tensors
         self._nodes = list()
         self.graph_def = None
@@ -494,17 +512,19 @@ class GraphBuilderONNX(object):
         self.alpha_lrelu = 0.1
         self.param_dict = OrderedDict()
         self.major_node_specs = list()
-        self.batch_size = batch_size
-        self.route_spec = 0  # keeping track of the current active 'route'
+        self.batch_size = 1
+        self.classes = 80
+        self.num = 9
 
     def build_onnx_graph(
             self,
             layer_configs,
             weights_file_path,
+            neck,
             verbose=True):
-        """Iterate over all layer configs (parsed from the DarkNet
-        representation of YOLO), create an ONNX graph, populate it with
-        weights from the weights file and return the graph definition.
+        """Iterate over all layer configs (parsed from the DarkNet representation
+        of YOLOv4-608), create an ONNX graph, populate it with weights from the weights
+        file and return the graph definition.
 
         Keyword arguments:
         layer_configs -- an OrderedDict object with all parsed layers' configurations
@@ -516,16 +536,33 @@ class GraphBuilderONNX(object):
             major_node_specs = self._make_onnx_node(layer_name, layer_dict)
             if major_node_specs.name is not None:
                 self.major_node_specs.append(major_node_specs)
-        # remove dummy 'route' and 'yolo' nodes
-        self.major_node_specs = [node for node in self.major_node_specs
-                                      if 'dummy' not in node.name]
+
+        transposes = list()
+        total_grids = 0
         outputs = list()
+        # for tensor_name in self.output_tensors.keys():
+        #     grids = 1
+        #     for i in self.output_tensors[tensor_name]:
+        #         grids *= i
+        #     total_grids += grids / (self.classes + 5)
+        #     output_dims = [self.batch_size, ] + \
+        #         self.output_tensors[tensor_name]
+        #     layer_name, layer_dict = tensor_name, {'output_dims': output_dims}
+        #     transpose_name = self._make_transpose_node(layer_name, layer_dict, len(self.output_tensors))
+        #     transposes.append(transpose_name)
+
         for tensor_name in self.output_tensors.keys():
             output_dims = [self.batch_size, ] + \
                 self.output_tensors[tensor_name]
             output_tensor = helper.make_tensor_value_info(
                 tensor_name, TensorProto.FLOAT, output_dims)
             outputs.append(output_tensor)
+
+        if neck == 'FPN':
+            transposes = transposes[::-1]
+
+        output_name = 'ouputs'
+
         inputs = [self.input_tensor]
         weight_loader = WeightLoader(weights_file_path)
         initializer = list()
@@ -539,22 +576,30 @@ class GraphBuilderONNX(object):
                 initializer.extend(initializer_layer)
                 inputs.extend(inputs_layer)
             elif layer_type == 'upsample':
-                initializer_layer, inputs_layer = weight_loader.load_upsample_scales(
+                initializer_layer, inputs_layer = weight_loader.load_resize_scales(
                     params)
+                initializer.extend(initializer_layer)
+                inputs.extend(inputs_layer)
+            elif 'reshape' in layer_type:
+                initializer_layer, inputs_layer = weight_loader.load_reshape_scales(params)
+                initializer.extend(initializer_layer)
+                inputs.extend(inputs_layer)
+            elif 'slice' in layer_type:
+                initializer_layer, inputs_layer = weight_loader.load_slice_params(params)
                 initializer.extend(initializer_layer)
                 inputs.extend(inputs_layer)
         del weight_loader
         self.graph_def = helper.make_graph(
             nodes=self._nodes,
-            name=self.model_name,
+            name='YOLOv4-608',
             inputs=inputs,
             outputs=outputs,
             initializer=initializer
         )
         if verbose:
             print(helper.printable_graph(self.graph_def))
-        model_def = helper.make_model(self.graph_def,
-                                      producer_name='NVIDIA TensorRT sample')
+        model_def = helper.make_model(self.graph_def, opset_imports=[helper.make_opsetid("", 10)],
+                                      producer_name='darknet to ONNX example')
         return model_def
 
     def _make_onnx_node(self, layer_name, layer_dict):
@@ -578,11 +623,10 @@ class GraphBuilderONNX(object):
         else:
             node_creators = dict()
             node_creators['convolutional'] = self._make_conv_node
-            node_creators['maxpool'] = self._make_maxpool_node
             node_creators['shortcut'] = self._make_shortcut_node
             node_creators['route'] = self._make_route_node
-            node_creators['upsample'] = self._make_upsample_node
-            node_creators['yolo'] = self._make_yolo_node
+            node_creators['upsample'] = self._make_resize_node
+            node_creators['maxpool'] = self._make_maxpool_node
 
             if layer_type in node_creators.keys():
                 major_node_output_name, major_node_output_channels = \
@@ -590,7 +634,14 @@ class GraphBuilderONNX(object):
                 major_node_specs = MajorNodeSpecs(major_node_output_name,
                                                   major_node_output_channels)
             else:
-                raise TypeError('layer of type %s not supported' % layer_type)
+                print(
+                    'Layer of type %s not supported, skipping ONNX node generation.' %
+                    layer_type)
+                if layer_type == 'yolo':
+                    self.classes = layer_dict['classes']
+                    self.num = layer_dict['num']
+                major_node_specs = MajorNodeSpecs(layer_name,
+                                                  None)
         return major_node_specs
 
     def _make_input_tensor(self, layer_name, layer_dict):
@@ -600,37 +651,31 @@ class GraphBuilderONNX(object):
         layer_name -- the layer's name (also the corresponding key in layer_configs)
         layer_dict -- a layer parameter dictionary (one element of layer_configs)
         """
-        #batch_size = layer_dict['batch']
+        batch_size = layer_dict['batch']
         channels = layer_dict['channels']
         height = layer_dict['height']
         width = layer_dict['width']
-        #self.batch_size = batch_size
+        self.batch_size = batch_size
         input_tensor = helper.make_tensor_value_info(
             str(layer_name), TensorProto.FLOAT, [
-                self.batch_size, channels, height, width])
+                batch_size, channels, height, width])
         self.input_tensor = input_tensor
         return layer_name, channels
 
-    def _get_previous_node_specs(self, target_index=0):
-        """Get a previously ONNX node.
-
+    def _get_previous_node_specs(self, target_index=-1):
+        """Get a previously generated ONNX node (skip those that were not generated).
         Target index can be passed for jumping to a specific index.
 
         Keyword arguments:
-        target_index -- optional for jumping to a specific index,
-                        default: 0 for the previous element, while
-                        taking 'route' spec into account
+        target_index -- optional for jumping to a specific index (default: -1 for jumping
+        to previous element)
         """
-        if target_index == 0:
-            if self.route_spec != 0:
-                previous_node = self.major_node_specs[self.route_spec]
-                assert 'dummy' not in previous_node.name
-                self.route_spec = 0
-            else:
-                previous_node = self.major_node_specs[-1]
-        else:
-            previous_node = self.major_node_specs[target_index]
-        assert previous_node.created_onnx_node
+        previous_node = None
+        for node in self.major_node_specs[target_index::-1]:
+            if node.created_onnx_node:
+                previous_node = node
+                break
+        assert previous_node is not None
         return previous_node
 
     def _make_conv_node(self, layer_name, layer_dict):
@@ -652,6 +697,12 @@ class GraphBuilderONNX(object):
         ) and layer_dict['batch_normalize'] == 1:
             batch_normalize = True
 
+        groups = 1
+        if 'groups' in layer_dict.keys():
+            groups = layer_dict['groups']
+
+        previous_channels = previous_channels // groups
+
         kernel_shape = [kernel_size, kernel_size]
         weights_shape = [filters, previous_channels] + kernel_shape
         conv_params = ConvParams(layer_name, batch_normalize, weights_shape)
@@ -670,6 +721,7 @@ class GraphBuilderONNX(object):
             outputs=[layer_name],
             kernel_shape=kernel_shape,
             strides=strides,
+            group=groups,
             auto_pad='SAME_LOWER',
             dilations=dilations,
             name=layer_name
@@ -709,10 +761,32 @@ class GraphBuilderONNX(object):
             self._nodes.append(lrelu_node)
             inputs = [layer_name_lrelu]
             layer_name_output = layer_name_lrelu
+        elif layer_dict['activation'] == 'relu':
+            layer_name_relu = layer_name + '_relu'
+
+            relu_node = helper.make_node(
+                'Relu',
+                inputs=inputs,
+                outputs=[layer_name_relu],
+                name=layer_name_relu
+            )
+            self._nodes.append(relu_node)
+            inputs = [layer_name_relu]
+            layer_name_output = layer_name_relu
+        elif layer_dict['activation'] == 'logistic':
+            layer_name_logistic = layer_name + '_logistic'
+
+            logistic_node = helper.make_node(
+                'Sigmoid',
+                inputs=inputs,
+                outputs=[layer_name_logistic],
+                name=layer_name_logistic
+            )
+            self._nodes.append(logistic_node)
+            inputs = [layer_name_logistic]
+            layer_name_output = layer_name_logistic
         elif layer_dict['activation'] == 'mish':
             layer_name_softplus = layer_name + '_softplus'
-            layer_name_tanh = layer_name + '_tanh'
-            layer_name_mish = layer_name + '_mish'
 
             softplus_node = helper.make_node(
                 'Softplus',
@@ -721,41 +795,33 @@ class GraphBuilderONNX(object):
                 name=layer_name_softplus
             )
             self._nodes.append(softplus_node)
+
+            inputs_t = [layer_name_softplus]
+            layer_name_tanh = layer_name + '_tanh'
             tanh_node = helper.make_node(
                 'Tanh',
-                inputs=[layer_name_softplus],
+                inputs=inputs_t,
                 outputs=[layer_name_tanh],
                 name=layer_name_tanh
             )
             self._nodes.append(tanh_node)
 
             inputs.append(layer_name_tanh)
-            mish_node = helper.make_node(
+            layer_name_mish = layer_name + '_mish'
+            mul_node = helper.make_node(
                 'Mul',
                 inputs=inputs,
                 outputs=[layer_name_mish],
                 name=layer_name_mish
             )
-            self._nodes.append(mish_node)
-
+            self._nodes.append(mul_node)
             inputs = [layer_name_mish]
             layer_name_output = layer_name_mish
-        elif layer_dict['activation'] == 'logistic':
-            layer_name_lgx = layer_name + '_lgx'
 
-            lgx_node = helper.make_node(
-                'Sigmoid',
-                inputs=inputs,
-                outputs=[layer_name_lgx],
-                name=layer_name_lgx
-            )
-            self._nodes.append(lgx_node)
-            inputs = [layer_name_lgx]
-            layer_name_output = layer_name_lgx
         elif layer_dict['activation'] == 'linear':
             pass
         else:
-            raise TypeError('%s activation not supported' % layer_dict['activation'])
+            print('Activation not supported.')
 
         self.param_dict[layer_name] = conv_params
         return layer_name_output, filters
@@ -798,54 +864,75 @@ class GraphBuilderONNX(object):
         """
         route_node_indexes = layer_dict['layers']
         if len(route_node_indexes) == 1:
-            if 'groups' in layer_dict.keys():
-                # for CSPNet-kind of architecture
-                assert 'group_id' in layer_dict.keys()
-                groups = layer_dict['groups']
-                group_id = int(layer_dict['group_id'])
-                assert group_id < groups
-                index = route_node_indexes[0]
-                if index > 0:
-                    # +1 for input node (same reason as below)
-                    index += 1
-                route_node_specs = self._get_previous_node_specs(
-                    target_index=index)
-                assert route_node_specs.channels % groups == 0
-                channels = route_node_specs.channels // groups
-
-                outputs = [layer_name + '_dummy%d' % i for i in range(groups)]
-                outputs[group_id] = layer_name
-                route_node = helper.make_node(
-                    'Split',
-                    axis=1,
-                    split=[channels] * groups,
-                    inputs=[route_node_specs.name],
-                    outputs=outputs,
+            split_index = route_node_indexes[0]
+            prev_node_specs = self._get_previous_node_specs(target_index=-1)
+            input_node_specs = self._get_previous_node_specs(
+                target_index=split_index if split_index < 0 else split_index + 1)
+            if split_index == -4 and 'maxpool' not in prev_node_specs.name:
+                # Increment by one because we skipped the YOLO layer:
+                split_index += 1
+                self.major_node_specs = self.major_node_specs[:split_index]
+                layer_name = None
+                channels = None
+            elif 'groups' in layer_dict:
+                assert layer_dict['groups'] == 2
+                assert layer_dict['group_id'] == 1
+                inputs = [input_node_specs.name]
+                slice_name = layer_name + '_slice'
+                channels = input_node_specs.channels
+                start = np.array([channels // 2]).astype(np.int64)
+                start_params = StartParams(layer_name, start)
+                self.param_dict[slice_name] = [start_params]
+                param_name = start_params.generate_param_name()
+                inputs.append(param_name)
+                end = np.array([channels]).astype(np.int64)
+                end_params = EndParams(layer_name, end)
+                self.param_dict[slice_name].append(end_params)
+                param_name = end_params.generate_param_name()
+                inputs.append(param_name)
+                axes = np.array([1]).astype(np.int64)
+                axes_params = AxesParams(layer_name, axes)
+                self.param_dict[slice_name].append(axes_params)
+                param_name = axes_params.generate_param_name()
+                inputs.append(param_name)
+                steps = np.array([1]).astype(np.int64)
+                step_params = StepParams(layer_name, steps)
+                self.param_dict[slice_name].append(step_params)
+                param_name = step_params.generate_param_name()
+                inputs.append(param_name)
+                slice_node = helper.make_node(
+                    'Slice',
+                    inputs=inputs,
+                    outputs=[layer_name],
                     name=layer_name,
                 )
-                self._nodes.append(route_node)
+                channels = channels // 2
+                self._nodes.append(slice_node)
             else:
-                if route_node_indexes[0] < 0:
-                    # route should skip self, thus -1
-                    self.route_spec = route_node_indexes[0] - 1
-                elif route_node_indexes[0] > 0:
-                    # +1 for input node (same reason as below)
-                    self.route_spec = route_node_indexes[0] + 1
-                # This dummy route node would be removed in the end.
-                layer_name = layer_name + '_dummy'
-                channels = 1
+                inputs = [input_node_specs.name]
+                route_node = helper.make_node(
+                    'Concat',
+                    axis=1,
+                    inputs=inputs,
+                    outputs=[layer_name],
+                    name=layer_name,
+                )
+                channels = input_node_specs.channels
+                self._nodes.append(route_node)
         else:
-            assert 'groups' not in layer_dict.keys(), \
-                'groups not implemented for multiple-input route layer!'
             inputs = list()
             channels = 0
             for index in route_node_indexes:
                 if index > 0:
-                    # Increment by one because we count the input as
-                    # a node (DarkNet does not)
+                    # Increment by one because we count the input as a node (DarkNet
+                    # does not)
                     index += 1
                 route_node_specs = self._get_previous_node_specs(
                     target_index=index)
+                if index < -1 and int(layer_name.split('_')[0]) + index != int(route_node_specs.name.split('_')[0]):
+                    index = int(layer_name.split('_')[0]) + index
+                    route_node_specs = self._get_previous_node_specs(
+                        target_index=index)
                 inputs.append(route_node_specs.name)
                 channels += route_node_specs.channels
             assert inputs
@@ -861,47 +948,38 @@ class GraphBuilderONNX(object):
             self._nodes.append(route_node)
         return layer_name, channels
 
-    def _make_upsample_node(self, layer_name, layer_dict):
-        """Create an ONNX Upsample node with the properties from
+    def _make_resize_node(self, layer_name, layer_dict):
+        """Create an ONNX Resize node with the properties from
         the DarkNet-based graph.
 
         Keyword arguments:
         layer_name -- the layer's name (also the corresponding key in layer_configs)
         layer_dict -- a layer parameter dictionary (one element of layer_configs)
         """
-        upsample_factor = float(layer_dict['stride'])
-        # Create the scales array with node parameters
-        scales = np.array([1.0, 1.0, upsample_factor, upsample_factor]).astype(np.float32)
+        resize_scale_factors = float(layer_dict['stride'])
+        # Create the scale factor array with node parameters
+        scales = np.array([1.0, 1.0, resize_scale_factors, resize_scale_factors]).astype(np.float32)
         previous_node_specs = self._get_previous_node_specs()
         inputs = [previous_node_specs.name]
 
         channels = previous_node_specs.channels
         assert channels > 0
-        upsample_params = UpsampleParams(layer_name, scales)
-        scales_name = upsample_params.generate_param_name()
-        # For ONNX opset >= 9, the Upsample node takes the scales array
-        # as an input.
+        resize_params = ResizeParams(layer_name, scales)
+        scales_name = resize_params.generate_param_name()
         inputs.append(scales_name)
 
-        upsample_node = helper.make_node(
-            'Upsample',
+        resize_node = helper.make_node(
+            'Resize',
             mode='nearest',
             inputs=inputs,
             outputs=[layer_name],
             name=layer_name,
         )
-        self._nodes.append(upsample_node)
-        self.param_dict[layer_name] = upsample_params
+        self._nodes.append(resize_node)
+        self.param_dict[layer_name] = resize_params
         return layer_name, channels
 
     def _make_maxpool_node(self, layer_name, layer_dict):
-        """Create an ONNX Maxpool node with the properties from
-        the DarkNet-based graph.
-
-        Keyword arguments:
-        layer_name -- the layer's name (also the corresponding key in layer_configs)
-        layer_dict -- a layer parameter dictionary (one element of layer_configs)
-        """
         stride = layer_dict['stride']
         kernel_size = layer_dict['size']
         previous_node_specs = self._get_previous_node_specs()
@@ -922,21 +1000,111 @@ class GraphBuilderONNX(object):
         self._nodes.append(maxpool_node)
         return layer_name, channels
 
-    def _make_yolo_node(self, layer_name, layer_dict):
-        """Create an ONNX Yolo node.
+    def _make_transpose_node(self, layer_name, layer_dict, output_len):
+        inputs = [layer_name]
+        reshape_name = layer_name + '_reshape_1'
+        shape = np.array([layer_dict['output_dims'][0], self.num // output_len, self.classes + 5,
+                          layer_dict['output_dims'][-2], layer_dict['output_dims'][-1]]).astype(np.int64)
+        reshape_params = ReshapeParams(layer_name, shape)
+        self.param_dict[reshape_name] = reshape_params
+        param_name = reshape_params.generate_param_name()
+        inputs.append(param_name)
+        reshape_node = onnx.helper.make_node(
+            'Reshape',
+            inputs=inputs,
+            outputs=[reshape_name]
+        )
+        self._nodes.append(reshape_node)
+        transpose_name = layer_name + '_transpose'
+        permutations = (0, 1, 3, 4, 2)
+        transpose_node = onnx.helper.make_node(
+            'Transpose',
+            inputs=[reshape_name],
+            outputs=[transpose_name],
+            perm=permutations
+        )
+        self._nodes.append(transpose_node)
+        inputs = [transpose_name]
+        output_name = layer_name + '_reshape_2'
+        shape = np.array([layer_dict['output_dims'][0], -1, self.classes + 5]).astype(np.int64)
+        reshape_params = ReshapeParams(transpose_name, shape)
+        self.param_dict[output_name] = reshape_params
+        param_name = reshape_params.generate_param_name()
+        inputs.append(param_name)
+        reshape_node = onnx.helper.make_node(
+            'Reshape',
+            inputs=inputs,
+            outputs=[output_name]
+        )
+        self._nodes.append(reshape_node)
+        return output_name
 
-        These are dummy nodes which would be removed in the end.
-        """
-        channels = 1
-        return layer_name + '_dummy', channels
+
+def main(cfg_file='yolov4.cfg', weights_file='yolov4.weights', output_file='yolov4.onnx', strides=None, neck='PAN'):
+    cfg_file_path = cfg_file
+
+    supported_layers = ['net', 'convolutional', 'shortcut',
+                        'route', 'upsample', 'maxpool']
+
+    parser = DarkNetParser(supported_layers)
+    layer_configs = parser.parse_cfg_file(cfg_file_path)
+    del parser
+
+    width = layer_configs['000_net']['width']
+    height = layer_configs['000_net']['height']
+
+    conv_layers, num_anchors = [], []
+    for layer_key in layer_configs.keys():
+        if 'conv' in layer_key:
+            conv_layer = layer_key
+        if 'yolo' in layer_key:
+            yolo_layer = layer_key
+            num_anchors.append(len(layer_configs[yolo_layer]['mask']))
+            layer_name = '' if layer_configs[conv_layer]['activation'] == 'linear' \
+                else f"_{layer_configs[conv_layer]['activation']}"
+            conv_layers.append(conv_layer + layer_name)
+
+    classes = layer_configs[yolo_layer]['classes']
+
+    if not strides:
+        return
+
+    output_tensor_dims = OrderedDict()
+    for conv_layer, stride, num_anchor in zip(conv_layers, strides, num_anchors):
+        output_tensor_dims[conv_layer] = [(classes + 5) * num_anchor, width // stride, height // stride]
+
+    # Create a GraphBuilderONNX object with the known output tensor dimensions:
+    builder = GraphBuilderONNX(output_tensor_dims)
+
+    weights_file_path = weights_file
+
+    # Now generate an ONNX graph with weights from the previously parsed layer configurations
+    # and the weights file:
+    yolo_model_def = builder.build_onnx_graph(
+        layer_configs=layer_configs,
+        weights_file_path=weights_file_path,
+        neck=neck,
+        verbose=True)
+    # Once we have the model definition, we do not need the builder anymore:
+    del builder
+
+    # Perform a sanity check on the ONNX model definition:
+    onnx.checker.check_model(yolo_model_def)
+
+    # Serialize the generated ONNX graph to this file:
+    output_file_path = output_file
+    onnx.save(yolo_model_def, output_file_path)
+    print('Save ONNX File {} success!'.format(output_file_path))
 
 
-def main():
-    if sys.version_info[0] < 3:
-        raise SystemExit('ERROR: This modified version of yolov3_to_onnx.py '
-                         'script is only compatible with python3...')
-
-    args = parse_args()
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='Transform YOLO weights to ONNX.')
+    parser.add_argument('-m', '--model', type=str, default='models/yolov4', help='path to yolo bundle without ext')
+    parser.add_argument(
+        '-c', '--category_num', type=int,
+        help='number of object categories (obsolete)')
+    parser.add_argument('--strides', nargs='+', type=int, default=[8, 16, 32], help='YOLO model cell size')
+    args = parser.parse_args()
     cfg_file_path = '%s.cfg' % args.model
     if not os.path.isfile(cfg_file_path):
         raise SystemExit('ERROR: file (%s) not found!' % cfg_file_path)
@@ -944,40 +1112,8 @@ def main():
     if not os.path.isfile(weights_file_path):
         raise SystemExit('ERROR: file (%s) not found!' % weights_file_path)
     output_file_path = '%s.onnx' % args.model
-
-    print('Parsing DarkNet cfg file...')
-    parser = DarkNetParser()
-    layer_configs = parser.parse_cfg_file(cfg_file_path)
-    category_num = get_category_num(cfg_file_path)
-    output_tensor_names = get_output_convs(layer_configs)
-    # e.g. ['036_convolutional', '044_convolutional', '052_convolutional']
-
-    c = (category_num + 5) * 3
-    h, w = get_h_and_w(layer_configs)
-    output_tensor_shapes = [
-        [c, h // 32, w // 32], [c, h // 16, w // 16], [c, h // 8, w // 8]]
-    output_tensor_shapes = output_tensor_shapes[:len(output_tensor_names)]
-    if is_pan_arch(cfg_file_path):
-        output_tensor_shapes.reverse()
-    output_tensor_dims = OrderedDict(
-        zip(output_tensor_names, output_tensor_shapes))
-
-    print('Building ONNX graph...')
-    builder = GraphBuilderONNX(
-        args.model, output_tensor_dims, MAX_BATCH_SIZE)
-    yolo_model_def = builder.build_onnx_graph(
-        layer_configs=layer_configs,
-        weights_file_path=weights_file_path,
-        verbose=True)
-
-    print('Checking ONNX model...')
-    onnx.checker.check_model(yolo_model_def)
-
-    print('Saving ONNX file...')
-    onnx.save(yolo_model_def, output_file_path)
-
-    print('Done.')
-
-
-if __name__ == '__main__':
-    main()
+    main(cfg_file=cfg_file_path,
+         weights_file=weights_file_path,
+         output_file=output_file_path,
+         strides=[8, 16, 32],
+         neck='none')
