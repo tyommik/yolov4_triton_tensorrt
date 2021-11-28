@@ -75,7 +75,7 @@ namespace nvinfer1
         ASSERT(d == a + length);
     }
 
-    void YoloPluginDynamic::serialize(void* buffer) const
+    void YoloPluginDynamic::serialize(void* buffer) const noexcept
     {
         char* d = static_cast<char*>(buffer), *a = d;
         write(d, mThreadCount);
@@ -93,7 +93,7 @@ namespace nvinfer1
         ASSERT(d == a + getSerializationSize());
     }
 
-    size_t YoloPluginDynamic::getSerializationSize() const
+    size_t YoloPluginDynamic::getSerializationSize() const noexcept
     {
         return sizeof(mThreadCount) + \
                sizeof(mYoloWidth) + sizeof(mYoloHeight) + \
@@ -103,34 +103,46 @@ namespace nvinfer1
                sizeof(mScaleXY) + sizeof(mNewCoords);
     }
 
-    IPluginV2DynamicExt* YoloPluginDynamic::clone() const
+    IPluginV2DynamicExt* YoloPluginDynamic::clone() const noexcept
     {
         YoloPluginDynamic *p = new YoloPluginDynamic(mLayerName, mYoloWidth, mYoloHeight, mNumAnchors, (float*) mAnchorsHost, mNumClasses, mInputWidth, mInputHeight, mScaleXY, mNewCoords);
         p->setPluginNamespace(mPluginNamespace.c_str());
         return p;
     }
 
-    DimsExprs YoloPluginDynamic::getOutputDimensions(int outputIndex, const DimsExprs* inputs, int nbInputs, IExprBuilder& exprBuilder)
+    DimsExprs YoloPluginDynamic::getOutputDimensions(int outputIndex, const DimsExprs* inputs, int nbInputs, IExprBuilder& exprBuilder) noexcept
     {
+        std::cout << "NumClasses: " << mNumClasses << std::endl;
         ASSERT(nbInputs == 1);
         ASSERT(outputIndex == 0);
-        ASSERT(inputs[0].d[1] == exprBuilder.constant((mNumClasses + 5) * mNumAnchors));
-        ASSERT(inputs[0].d[2] == exprBuilder.constant(mYoloHeight));
-        ASSERT(inputs[0].d[3] == exprBuilder.constant(mYoloWidth));
+        nvinfer1::DimsExprs output(inputs[0]);
+        auto input_dimsexprs = inputs[0];
+        std::cout << "try to get in_channel" << std::endl;
+        int in_channel = input_dimsexprs.d[1]->getConstantValue();
+        std::cout << "in_channel:" << in_channel << std::endl;
+//        std::cout << "inputs[0].d[1]: " << output.getConstantValue() << std::endl;
+//        ASSERT(inputs[0].d[1] == exprBuilder.constant((mNumClasses + 5) * mNumAnchors));
+//        ASSERT(inputs[0].d[2] == exprBuilder.constant(mYoloHeight));
+//        ASSERT(inputs[0].d[3] == exprBuilder.constant(mYoloWidth));
 
         // output detection results to the channel dimension
         int totalsize = mYoloWidth * mYoloHeight * mNumAnchors * sizeof(Detection) / sizeof(float);
+        std::cout << "TotalSize: " << totalsize << std::endl;
+
+//        std::cout << "inputs[0].d[1]: " << output.getConstantValue() << std::endl;
 
         DimsExprs ret;
         ret.nbDims = 4;
-        ret.d[0] = inputs[0].d[0];  // batch_size
+        //FIXME replace batch size
+        //ret.d[0] = inputs[0].d[0];  // batch_size
+        ret.d[0] = exprBuilder.constant(1);  // batch_size
         ret.d[1] = exprBuilder.constant(totalsize);
         ret.d[2] = exprBuilder.constant(1);
         ret.d[3] = exprBuilder.constant(1);
         return ret;
     }
 
-    bool YoloPluginDynamic::supportsFormatCombination(int pos, const PluginTensorDesc* inOut, int nbInputs, int nbOutputs)
+    bool YoloPluginDynamic::supportsFormatCombination(int pos, const PluginTensorDesc* inOut, int nbInputs, int nbOutputs) noexcept
     {
         ASSERT(nbInputs == 1);
         ASSERT(nbOutputs == 1);
@@ -138,7 +150,7 @@ namespace nvinfer1
     }
 
     // Return the DataType of the plugin output at the requested index
-    DataType YoloPluginDynamic::getOutputDataType(int index, const nvinfer1::DataType* inputTypes, int nbInputs) const
+    DataType YoloPluginDynamic::getOutputDataType(int index, const nvinfer1::DataType* inputTypes, int nbInputs) const noexcept
     {
         ASSERT(index == 0);
         ASSERT(nbInputs == 1);
@@ -146,37 +158,37 @@ namespace nvinfer1
         return DataType::kFLOAT;
     }
 
-    const char* YoloPluginDynamic::getPluginType() const
-    {
+    const char* YoloPluginDynamic::getPluginType() const noexcept
+{
         return "YoloPluginDynamic_TRT";
     }
 
-    const char* YoloPluginDynamic::getPluginVersion() const
+    const char* YoloPluginDynamic::getPluginVersion() const noexcept
     {
         return "1";
     }
 
-    int YoloPluginDynamic::initialize()
+    int YoloPluginDynamic::initialize() noexcept
     {
         return 0;
     }
 
-    void YoloPluginDynamic::terminate()
+    void YoloPluginDynamic::terminate() noexcept
     {
         CHECK(cudaFree(mAnchors));
     }
 
-    void YoloPluginDynamic::destroy()
+    void YoloPluginDynamic::destroy() noexcept
     {
         delete this;
     }
 
-    void YoloPluginDynamic::setPluginNamespace(const char* pluginNamespace)
+    void YoloPluginDynamic::setPluginNamespace(const char* pluginNamespace) noexcept
     {
         mPluginNamespace = pluginNamespace;
     }
 
-    const char* YoloPluginDynamic::getPluginNamespace() const
+    const char* YoloPluginDynamic::getPluginNamespace() const noexcept
     {
         return mPluginNamespace.c_str();
     }
@@ -313,7 +325,7 @@ namespace nvinfer1
         }
     }
 
-    int YoloPluginDynamic::enqueue(const PluginTensorDesc* inputDesc, const PluginTensorDesc* outputDesc, const void* const* inputs, void* const* outputs, void* workspace, cudaStream_t stream)
+    int YoloPluginDynamic::enqueue(const PluginTensorDesc* inputDesc, const PluginTensorDesc* outputDesc, const void* const* inputs, void* const* outputs, void* workspace, cudaStream_t stream) noexcept
     {
         const int batchSize = inputDesc->dims.d[0];
         forwardGpu((const float* const*)inputs, (float*)outputs[0], stream, batchSize);
@@ -328,22 +340,22 @@ namespace nvinfer1
         mFC.fields = mPluginAttributes.data();
     }
 
-    const char* YoloPluginDynamicCreator::getPluginName() const
+    const char* YoloPluginDynamicCreator::getPluginName() const noexcept
     {
         return "YoloPluginDynamic_TRT";
     }
 
-    const char* YoloPluginDynamicCreator::getPluginVersion() const
+    const char* YoloPluginDynamicCreator::getPluginVersion() const noexcept
     {
         return "1";
     }
 
-    const PluginFieldCollection* YoloPluginDynamicCreator::getFieldNames()
+    const PluginFieldCollection* YoloPluginDynamicCreator::getFieldNames() noexcept
     {
         return &mFC;
     }
 
-    IPluginV2* YoloPluginDynamicCreator::createPlugin(const char* name, const PluginFieldCollection* fc)
+    IPluginV2* YoloPluginDynamicCreator::createPlugin(const char* name, const PluginFieldCollection* fc) noexcept
     {
         ASSERT(!strcmp(name, getPluginName()));
         const PluginField* fields = fc->fields;
@@ -412,7 +424,7 @@ namespace nvinfer1
         return obj;
     }
 
-    IPluginV2* YoloPluginDynamicCreator::deserializePlugin(const char* name, const void* serialData, size_t serialLength)
+    IPluginV2* YoloPluginDynamicCreator::deserializePlugin(const char* name, const void* serialData, size_t serialLength) noexcept
     {
         YoloPluginDynamic* obj = new YoloPluginDynamic(name, serialData, serialLength);
         obj->setPluginNamespace(mNamespace.c_str());

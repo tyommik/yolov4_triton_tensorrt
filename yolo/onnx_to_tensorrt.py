@@ -56,12 +56,8 @@ import argparse
 
 import tensorrt as trt
 
-from yolo_to_onnx import DarkNetParser, get_h_and_w
+from yolo_to_onnx import DarkNetParser
 from trt_plugins import add_yolo_plugins
-
-
-# MAX_BATCH_SIZE = 1
-MAX_BATCH_SIZE = 32
 
 
 def load_onnx(model_name):
@@ -88,12 +84,10 @@ def set_net_batch(network, batch_size):
     return network
 
 
-def build_engine(model_name, do_int8, net_w, net_h, dla_core, verbose=False):
+def build_engine(model_name, category_num, net_w, net_h, do_int8, dla_core,
+                 batch_size=1, verbose=False):
+    MAX_BATCH_SIZE = batch_size
     """Build a TensorRT engine from ONNX using the older API."""
-    cfg_file_path = model_name + '.cfg'
-    parser = DarkNetParser()
-    layer_configs = parser.parse_cfg_file(cfg_file_path)
-    # net_h, net_w = get_h_and_w(layer_configs)
 
     print('Loading the ONNX file...')
     onnx_data = load_onnx(model_name)
@@ -114,7 +108,9 @@ def build_engine(model_name, do_int8, net_w, net_h, dla_core, verbose=False):
         network = set_net_batch(network, MAX_BATCH_SIZE)
 
         print('Adding yolo_layer plugins...')
-        network = add_yolo_plugins(network, model_name, TRT_LOGGER)
+        # network = add_yolo_plugins(network, model_name, TRT_LOGGER)
+        network = add_yolo_plugins(
+            network, model_name, category_num, net_w, net_h, TRT_LOGGER)
 
         print('Building an engine.  This would take a while...')
         print('(Use "--verbose" or "-v" to enable verbose logging.)')
@@ -178,10 +174,10 @@ def main():
               '{dimension} could be either a single number (e.g. '
               '288, 416, 608) or 2 numbers, WxH (e.g. 416x256)'))
     parser.add_argument(
-        '-w', '--width', type=int, default=416,
+        '--width', type=int, default=416,
         help='input width resolution')
     parser.add_argument(
-        '-h', '--height', type=int, default=416,
+        '--height', type=int, default=416,
         help='input height resolution')
     parser.add_argument(
         '--int8', action='store_true',
@@ -189,14 +185,17 @@ def main():
     parser.add_argument(
         '--dla_core', type=int, default=-1,
         help='id of DLA core for inference (0 ~ N-1)')
+    parser.add_argument(
+        '-b', '--batch_size', type=int, default=1,
+        help='batch size of the TensorRT engine [1]')
     args = parser.parse_args()
-
     engine = build_engine(
-        args.model, args.int8, args.width, args.height, args.dla_core, args.verbose)
+        args.model, args.category_num, args.width, args.height, args.int8, args.dla_core,
+        args.batch_size, args.verbose)
     if engine is None:
         raise SystemExit('ERROR: failed to build the TensorRT engine!')
 
-    engine_path = '%s.trt' % args.model
+    engine_path = f'{args.model}_static_b{args.batch_size}.trt'
     with open(engine_path, 'wb') as f:
         f.write(engine.serialize())
     print('Serialized the TensorRT engine to file: %s' % engine_path)

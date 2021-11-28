@@ -8,6 +8,59 @@ import argparse
 import os
 
 
+def get_output_convs(layer_configs):
+    """Find output conv layer names from layer configs.
+    The output conv layers are those conv layers immediately proceeding
+    the yolo layers.
+    # Arguments
+        layer_configs: output of the DarkNetParser, i.e. a OrderedDict of
+                       the yolo layers.
+    """
+    output_convs = []
+    previous_layer = None
+    for current_layer in layer_configs.keys():
+        if previous_layer is not None and current_layer.endswith('yolo'):
+            assert previous_layer.endswith('convolutional')
+            activation = layer_configs[previous_layer]['activation']
+            if activation == 'linear':
+                output_convs.append(previous_layer)
+            elif activation == 'logistic':
+                output_convs.append(previous_layer + '_lgx')
+            else:
+                raise TypeError('unexpected activation: %s' % activation)
+        previous_layer = current_layer
+    return output_convs
+
+
+def get_h_and_w(layer_configs):
+    """Find input height and width of the yolo model from layer configs."""
+    net_config = layer_configs['000_net']
+    return net_config['height'], net_config['width']
+
+
+def get_category_num(cfg_file_path):
+    """Find number of output classes of the yolo model."""
+    with open(cfg_file_path, 'r') as f:
+        cfg_lines = [l.strip() for l in f.readlines()]
+    classes_lines = [l for l in cfg_lines if l.startswith('classes=')]
+    assert len(set(classes_lines)) == 1
+    return int(classes_lines[-1].split('=')[-1].strip())
+
+
+def is_pan_arch(cfg_file_path):
+    """Determine whether the yolo model is with PAN architecture."""
+    with open(cfg_file_path, 'r') as f:
+        cfg_lines = [l.strip() for l in f.readlines()]
+    yolos_or_upsamples = [l for l in cfg_lines
+                            if l in ['[yolo]', '[upsample]']]
+    yolo_count = len([l for l in yolos_or_upsamples if l == '[yolo]'])
+    upsample_count = len(yolos_or_upsamples) - yolo_count
+    assert yolo_count in (2, 3, 4)  # at most 4 yolo layers
+    assert upsample_count == yolo_count - 1 or upsample_count == 0
+    # the model is with PAN if an upsample layer appears before the 1st yolo
+    return yolos_or_upsamples[0] == '[upsample]'
+
+
 class DarkNetParser(object):
     def __init__(self, supported_layers):
         """Initializes a DarkNetParser object.
@@ -106,7 +159,7 @@ class DarkNetParser(object):
         param_line -- one parsed line within a layer block
         """
         param_line = param_line.replace(' ', '')
-        param_type, param_value_raw = param_line.split('=')
+        param_type, param_value_raw = param_line[:param_line.index('#') if '#' in param_line else len(param_line)].split('=')
         param_value = None
         if param_type == 'layers':
             layer_indexes = list()

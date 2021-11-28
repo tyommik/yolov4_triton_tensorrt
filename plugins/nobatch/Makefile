@@ -25,9 +25,10 @@ NVCCFLAGS=
 TENSORRT_INCS=-I"/usr/include/x86_64-linux-gnu/"
 TENSORRT_LIBS=-L"/usr/lib/x86_64-linux-gnu/"
 
+
 # INCS and LIBS
-INCS=-I"/usr/local/cuda-11.3/include" $(TENSORRT_INCS) -I"/usr/local/include" -I"plugin"
-LIBS=-L"/usr/local/cuda-11.3/lib64" $(TENSORRT_LIBS) -L"/usr/local/lib" -Wl,--start-group -lnvinfer -lnvparsers -lnvinfer_plugin -lcudnn -lcublas -lcudart_static -lnvToolsExt -lcudart -lrt -ldl -lpthread -Wl,--end-group
+INCS=-I"/usr/local/cuda/include" $(TENSORRT_INCS) -I"/usr/local/include" -I"plugin"
+LIBS=-L"/usr/local/cuda/lib64" $(TENSORRT_LIBS) -L"/usr/local/lib" -Wl,--start-group -lnvinfer -lnvparsers -lnvinfer_plugin -lcudnn -lcublas -lcudart_static -lnvToolsExt -lcudart -lrt -ldl -lpthread -Wl,--end-group
 
 .PHONY: all clean
 

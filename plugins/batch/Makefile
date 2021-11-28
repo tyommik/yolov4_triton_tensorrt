@@ -22,8 +22,8 @@ $(info NVCCFLAGS: $(NVCCFLAGS))
 NVCCFLAGS=
 
 # These are the directories where I installed TensorRT on my x86_64 PC.
-TENSORRT_INCS=-I"/opt/local/TensorRT-7.2.3.4/include"
-TENSORRT_LIBS=-L"/opt/local/TensorRT-7.2.3.4/lib"
+TENSORRT_INCS=-I"/usr/lib/x86_64-linux-gnu/include"
+TENSORRT_LIBS=-L"/usr/lib/x86_64-linux-gnu/lib"
 
 # INCS and LIBS
 INCS=-I"/usr/local/cuda/include" $(TENSORRT_INCS) -I"/usr/local/include" -I"plugin"

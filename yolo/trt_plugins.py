@@ -80,10 +80,12 @@ def get_plugin_creator(plugin_name, logger):
     return None
 
 
-def add_yolo_plugins(network, model_name, logger):
+def add_yolo_plugins(network, model_name, num_classes, input_width, input_height, logger):
     """Add yolo plugins into a TensorRT network."""
     cfg_file_path = model_name + '.cfg'
-    parser = DarkNetParser()
+    supported_layers = ['net', 'convolutional', 'shortcut',
+                        'route', 'upsample', 'maxpool']
+    parser = DarkNetParser(supported_layers)
     layer_configs = parser.parse_cfg_file(cfg_file_path)
     num_classes = get_category_num(cfg_file_path)
     output_tensor_names = get_output_convs(layer_configs)

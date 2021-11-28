@@ -103,6 +103,7 @@ def build_engine(model_name, category_num, net_w, net_h, do_int8, dla_core,
     TRT_LOGGER = trt.Logger(trt.Logger.VERBOSE) if verbose else trt.Logger()
     EXPLICIT_BATCH = [] if trt.__version__[0] < '7' else \
         [1 << (int)(trt.NetworkDefinitionCreationFlag.EXPLICIT_BATCH)]
+
     with trt.Builder(TRT_LOGGER) as builder, builder.create_network(*EXPLICIT_BATCH) as network, trt.OnnxParser(network, TRT_LOGGER) as parser:
         if do_int8 and not builder.platform_has_fast_int8:
             raise RuntimeError('INT8 not supported on this platform')
@@ -138,6 +139,7 @@ def build_engine(model_name, category_num, net_w, net_h, do_int8, dla_core,
             config.set_flag(trt.BuilderFlag.GPU_FALLBACK)
             config.set_flag(trt.BuilderFlag.FP16)
             profile = builder.create_optimization_profile()
+            batch_size = 16
             profile.set_shape(
                 '000_net',                      # input tensor name
                 (         1, 3, net_h, net_w),  # min shape
@@ -200,7 +202,7 @@ def main():
     if engine is None:
         raise SystemExit('ERROR: failed to build the TensorRT engine!')
 
-    engine_path = '%s.trt' % args.model
+    engine_path = '%s_dynamic.trt' % args.model
     with open(engine_path, 'wb') as f:
         f.write(engine.serialize())
     print('Serialized the TensorRT engine to file: %s' % engine_path)

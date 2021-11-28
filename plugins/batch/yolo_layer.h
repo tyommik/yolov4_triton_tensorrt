@@ -54,34 +54,34 @@ namespace nvinfer1
 
             // IPluginV2DynamicExt Methods
 
-            IPluginV2DynamicExt* clone() const override;
+            IPluginV2DynamicExt* clone() const noexcept override;;
 
-            DimsExprs getOutputDimensions(int outputIndex, const DimsExprs* inputs, int nbInputs, IExprBuilder& exprBuilder) override;
+            DimsExprs getOutputDimensions(int outputIndex, const DimsExprs* inputs, int nbInputs, IExprBuilder& exprBuilder) noexcept override;
 
-            bool supportsFormatCombination(int pos, const PluginTensorDesc* inOut, int nbInputs, int nbOutputs) override;
+            bool supportsFormatCombination(int pos, const PluginTensorDesc* inOut, int nbInputs, int nbOutputs) noexcept override;
 
-            void configurePlugin(const DynamicPluginTensorDesc* in, int nbInputs, const DynamicPluginTensorDesc* out, int nbOutputs) override {};
+            void configurePlugin(const DynamicPluginTensorDesc* in, int nbInputs, const DynamicPluginTensorDesc* out, int nbOutputs) noexcept override {};
 
-            size_t getWorkspaceSize(const PluginTensorDesc* inputs, int nbInputs, const PluginTensorDesc* outputs, int nbOutputs) const override { return 0; }
+            size_t getWorkspaceSize(const PluginTensorDesc* inputs, int nbInputs, const PluginTensorDesc* outputs, int nbOutputs) const noexcept override { return 0; }
 
-            int enqueue(const PluginTensorDesc* inputDesc, const PluginTensorDesc* outputDesc, const void* const* inputs, void* const* outputs, void* workspace, cudaStream_t stream) override;
+            int enqueue(const PluginTensorDesc* inputDesc, const PluginTensorDesc* outputDesc, const void* const* inputs, void* const* outputs, void* workspace, cudaStream_t stream) noexcept override;
 
             // IPluginV2Ext Methods
 
-            DataType getOutputDataType(int index, const nvinfer1::DataType* inputTypes, int nbInputs) const override;
+            DataType getOutputDataType(int index, const nvinfer1::DataType* inputTypes, int nbInputs) const noexcept override;
 
             // IPluginV2 Methods
 
-            const char* getPluginType() const override;
-            const char* getPluginVersion() const override;
-            int getNbOutputs() const override { return 1; }
-            int initialize() override;
-            void terminate() override;
-            size_t getSerializationSize() const override;
-            void serialize(void* buffer) const override;
-            void destroy() override;
-            void setPluginNamespace(const char* pluginNamespace) override;
-            const char* getPluginNamespace() const override;
+            const char* getPluginType() const noexcept override;
+            const char* getPluginVersion() const noexcept override;
+            int getNbOutputs() const noexcept override { return 1; }
+            int initialize() noexcept override;
+            void terminate() noexcept override;
+            size_t getSerializationSize() const noexcept override;
+            void serialize(void* buffer) const noexcept override;
+            void destroy() noexcept override;
+            void setPluginNamespace(const char* pluginNamespace) noexcept override;
+            const char* getPluginNamespace() const noexcept override;
 
         private:
             void forwardGpu(const float* const* inputs, float* output, cudaStream_t stream, int batchSize = 1);
@@ -89,7 +89,7 @@ namespace nvinfer1
             const std::string mLayerName;
             std::string mPluginNamespace;
 
-            int mThreadCount = 64;
+            int mThreadCount = 256;
             int mYoloWidth, mYoloHeight, mNumAnchors;
             float mAnchorsHost[MAX_ANCHORS * 2];
             float *mAnchors;  // allocated on GPU
@@ -100,13 +100,13 @@ namespace nvinfer1
 
         protected:
             // To prevent compiler warnings.
-            using IPluginV2DynamicExt::canBroadcastInputAcrossBatch;
-            using IPluginV2DynamicExt::configurePlugin;
-            using IPluginV2DynamicExt::enqueue;
-            using IPluginV2DynamicExt::getOutputDimensions;
-            using IPluginV2DynamicExt::getWorkspaceSize;
-            using IPluginV2DynamicExt::isOutputBroadcastAcrossBatch;
-            using IPluginV2DynamicExt::supportsFormat;
+            // using IPluginV2DynamicExt::canBroadcastInputAcrossBatch;
+            // using IPluginV2DynamicExt::configurePlugin;
+            // using IPluginV2DynamicExt::enqueue;
+            // using IPluginV2DynamicExt::getOutputDimensions;
+            // using IPluginV2DynamicExt::getWorkspaceSize;
+            // using IPluginV2DynamicExt::isOutputBroadcastAcrossBatch;
+            // using IPluginV2DynamicExt::supportsFormat;
     };
 
     class YoloPluginDynamicCreator : public IPluginCreator
@@ -114,19 +114,23 @@ namespace nvinfer1
         public:
             YoloPluginDynamicCreator();
 
-            const char* getPluginName() const override;
+            const char* getPluginName() const noexcept override;
 
-            const char* getPluginVersion() const override;
+            const char* getPluginVersion() const noexcept override;
 
-            const PluginFieldCollection* getFieldNames() override;
+            const PluginFieldCollection* getFieldNames() noexcept override;
 
-            IPluginV2* createPlugin(const char* name, const PluginFieldCollection* fc) override;
+            IPluginV2* createPlugin(const char* name, const PluginFieldCollection* fc) noexcept override;
 
-            IPluginV2* deserializePlugin(const char* name, const void* serialData, size_t serialLength) override;
+            IPluginV2* deserializePlugin(const char* name, const void* serialData, size_t serialLength) noexcept override;
 
-            void setPluginNamespace(const char* libNamespace) override { mNamespace = libNamespace; }
+            void setPluginNamespace(const char* libNamespace) noexcept override {
+                mNamespace = libNamespace;
+            }
 
-            const char* getPluginNamespace() const override { return mNamespace.c_str(); }
+            const char* getPluginNamespace() const noexcept override {
+                return mNamespace.c_str();
+            }
 
         private:
             static PluginFieldCollection mFC;
