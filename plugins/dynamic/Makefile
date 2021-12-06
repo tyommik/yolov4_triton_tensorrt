@@ -5,7 +5,7 @@ CXXFLAGS=-Wall -std=c++11 -g -O
 NVCC=nvcc
 
 # space separated compute values ex: computes=70 75. If not present will fetch device's CC
-computes=70 86
+computes=
 
 ifeq ($(computes), )
   computes= $(shell python gpu_cc.py)
