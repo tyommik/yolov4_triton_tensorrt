@@ -423,3 +423,4 @@ namespace nvinfer1
     std::vector<PluginField> YoloPluginDynamicCreator::mPluginAttributes;
     REGISTER_TENSORRT_PLUGIN(YoloPluginDynamicCreator);
 } // namespace nvinfer1
+

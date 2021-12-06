@@ -21,7 +21,7 @@ def parse_cfg(cfg_file: str):
                 block['type'] = line[1:-1]
             else:
                 key, value = line.rsplit('=')
-                value = value.strip()
+                value = value.strip().split('#', maxsplit=1)[0].strip()
                 key = key.strip().replace(' ', '')
                 if value.isnumeric():
                     value = int(value)
@@ -44,6 +44,3 @@ if __name__ == '__main__':
     width = blocks['net']['width']
     classes = blocks['yolo']['classes']
     print(f"{width} {height} {classes}")
-
-
-

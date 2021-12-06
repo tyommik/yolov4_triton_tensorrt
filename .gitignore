@@ -1,6 +1,7 @@
 .idea/
 overlay/
-
+__pycache__
+yolo/__pycache__
 models/*.weights
 models/*.onnx
 models/*.trt

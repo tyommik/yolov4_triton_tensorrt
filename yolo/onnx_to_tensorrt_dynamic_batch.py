@@ -194,6 +194,9 @@ def main():
     parser.add_argument(
         '-b', '--batch_size', type=int, default=1,
         help='batch size of the TensorRT engine [1]')
+    parser.add_argument(
+        '-ve', '--ver', type=str, required=False,
+        help=('container_version (e.g. 21.06, 21.10 and etc.)'))
     args = parser.parse_args()
 
     engine = build_engine(
@@ -202,7 +205,7 @@ def main():
     if engine is None:
         raise SystemExit('ERROR: failed to build the TensorRT engine!')
 
-    engine_path = '%s_dynamic.trt' % args.model
+    engine_path = f'{args.model}_{args.ver}_dynamic.trt'
     with open(engine_path, 'wb') as f:
         f.write(engine.serialize())
     print('Serialized the TensorRT engine to file: %s' % engine_path)
